@@ -812,6 +812,7 @@ class CausalInferenceStreamingPipeline(torch.nn.Module):
         else:
             return video
 
+    @torch.inference_mode()
     def stream_inference(
         self,
         noise: torch.Tensor,
