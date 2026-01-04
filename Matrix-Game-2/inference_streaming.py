@@ -145,6 +145,105 @@ class InteractiveGameInference:
                 name=os.path.basename(img_path),
                 mode=mode
             )
+
+class InteractiveGameStreamingSession(InteractiveGameInference):
+    """
+    Library-friendly streaming session.
+    Call prepare(...) once, then iterate over stream_frames(...) to get numpy blocks.
+    """
+    def __init__(self, args):
+        super().__init__(args)
+        self._prepared = False
+        self._conditional_dict = None
+        self._sampled_noise = None
+        self._mode = None
+        self._name = None
+
+    def _init_action_conditions(self, num_frames, mode):
+        if mode == "universal":
+            keyboard_dim = 4
+        elif mode == "gta_drive":
+            keyboard_dim = 2
+        elif mode == "templerun":
+            keyboard_dim = 7
+        else:
+            raise ValueError(f"Unsupported mode: {mode}")
+        keyboard_cond = torch.zeros(
+            (1, num_frames, keyboard_dim), device=self.device, dtype=self.weight_dtype
+        )
+        conditional_dict = {"keyboard_cond": keyboard_cond}
+        if mode != "templerun":
+            mouse_cond = torch.zeros(
+                (1, num_frames, 2), device=self.device, dtype=self.weight_dtype
+            )
+            conditional_dict["mouse_cond"] = mouse_cond
+        return conditional_dict
+
+    def prepare(self, image, mode='universal', name=None):
+        if isinstance(image, str):
+            img_path = image
+            image = load_image(img_path.strip())
+            self._name = os.path.basename(img_path)
+        else:
+            self._name = name or "stream"
+
+        image = self._resizecrop(image, 352, 640)
+        image = self.frame_process(image)[None, :, None, :, :].to(
+            dtype=self.weight_dtype, device=self.device
+        )
+        padding_video = torch.zeros_like(image).repeat(
+            1, 1, 4 * (self.args.max_num_output_frames - 1), 1, 1
+        )
+        img_cond = torch.concat([image, padding_video], dim=2)
+        tiler_kwargs = {"tiled": True, "tile_size": [44, 80], "tile_stride": [23, 38]}
+        img_cond = self.vae.encode(img_cond, device=self.device, **tiler_kwargs).to(self.device)
+        mask_cond = torch.ones_like(img_cond)
+        mask_cond[:, :, 1:] = 0
+        cond_concat = torch.cat([mask_cond[:, :4], img_cond], dim=1)
+        visual_context = self.vae.clip.encode_video(image)
+        sampled_noise = torch.randn(
+            [1, 16, self.args.max_num_output_frames, 44, 80],
+            device=self.device,
+            dtype=self.weight_dtype,
+        )
+
+        num_frames = (self.args.max_num_output_frames - 1) * 4 + 1
+        conditional_dict = self._init_action_conditions(num_frames, mode)
+        conditional_dict["cond_concat"] = cond_concat.to(device=self.device, dtype=self.weight_dtype)
+        conditional_dict["visual_context"] = visual_context.to(device=self.device, dtype=self.weight_dtype)
+
+        self._conditional_dict = conditional_dict
+        self._sampled_noise = sampled_noise
+        self._mode = mode
+        self._prepared = True
+        return self
+
+    def stream_frames(self, action_source, mode=None):
+        if not self._prepared:
+            raise RuntimeError("Call prepare(...) before stream_frames(...).")
+        if mode is None:
+            mode = self._mode
+
+        if callable(action_source):
+            action_provider = action_source
+        else:
+            iterator = iter(action_source)
+
+            def action_provider(current_start_frame, num_frame_per_block, action_mode):
+                try:
+                    return next(iterator)
+                except StopIteration as exc:
+                    raise RuntimeError(
+                        "action_source exhausted before generation finished"
+                    ) from exc
+
+        return self.pipeline.stream_inference(
+            noise=self._sampled_noise,
+            conditional_dict=self._conditional_dict,
+            return_latents=False,
+            mode=mode,
+            action_provider=action_provider,
+        )
         
 def main():
     """Main entry point for video generation."""

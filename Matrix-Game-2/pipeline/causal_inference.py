@@ -11,7 +11,7 @@ import torch.nn.functional as F
 from demo_utils.constant import ZERO_VAE_CACHE
 from tqdm import tqdm
 
-def get_current_action(mode="universal"):
+def get_current_action(mode="universal", device="cuda"):
 
     CAM_VALUE = 0.1
     if mode == 'universal':
@@ -40,8 +40,8 @@ def get_current_action(mode="universal"):
                     flag = 1
             except:
                 pass
-        mouse_cond = torch.tensor(CAMERA_VALUE_MAP[idx_mouse]).cuda()
-        keyboard_cond = torch.tensor(KEYBOARD_IDX[idx_keyboard]).cuda()
+        mouse_cond = torch.tensor(CAMERA_VALUE_MAP[idx_mouse], device=device)
+        keyboard_cond = torch.tensor(KEYBOARD_IDX[idx_keyboard], device=device)
     elif mode == 'gta_drive':
         print()
         print('-'*30)
@@ -75,8 +75,8 @@ def get_current_action(mode="universal"):
                 flag = 1
             except:
                 pass
-        mouse_cond = torch.tensor(CAMERA_VALUE_MAP[idx_mouse[0]]).cuda()
-        keyboard_cond = torch.tensor(KEYBOARD_IDX[idx_keyboard[0]]).cuda()
+        mouse_cond = torch.tensor(CAMERA_VALUE_MAP[idx_mouse[0]], device=device)
+        keyboard_cond = torch.tensor(KEYBOARD_IDX[idx_keyboard[0]], device=device)
     elif mode == 'templerun':
         print()
         print('-'*30)
@@ -96,7 +96,7 @@ def get_current_action(mode="universal"):
                     flag = 1
             except:
                 pass
-        keyboard_cond = torch.tensor(KEYBOARD_IDX[idx_keyboard]).cuda()
+        keyboard_cond = torch.tensor(KEYBOARD_IDX[idx_keyboard], device=device)
     
     if mode != 'templerun':
         return {
@@ -106,6 +106,130 @@ def get_current_action(mode="universal"):
     return {
         "keyboard": keyboard_cond
     }
+
+def _is_numeric_sequence(value):
+    if not isinstance(value, (list, tuple)):
+        return False
+    if len(value) == 0:
+        return False
+    return all(isinstance(v, (int, float, np.number)) for v in value)
+
+def _parse_key_tokens(value):
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [token for token in value.strip().lower().split() if token]
+    if isinstance(value, (list, tuple)):
+        return [str(token).strip().lower() for token in value if str(token).strip()]
+    return []
+
+def _encode_keys_from_tokens(mode, tokens, device):
+    cam_value = 0.1
+    if mode == "universal":
+        camera_value_map = {
+            "i":  [cam_value, 0],
+            "k":  [-cam_value, 0],
+            "j":  [0, -cam_value],
+            "l":  [0, cam_value],
+            "u":  [0, 0],
+        }
+        keyboard_idx = {
+            "w": [1, 0, 0, 0], "s": [0, 1, 0, 0], "a": [0, 0, 1, 0], "d": [0, 0, 0, 1],
+            "q": [0, 0, 0, 0],
+        }
+        mouse_key = None
+        keyboard_key = None
+        for token in tokens:
+            if token in camera_value_map:
+                mouse_key = token
+            if token in keyboard_idx:
+                keyboard_key = token
+        if mouse_key is None:
+            mouse_key = "u"
+        if keyboard_key is None:
+            keyboard_key = "q"
+        return {
+            "mouse": torch.tensor(camera_value_map[mouse_key], device=device),
+            "keyboard": torch.tensor(keyboard_idx[keyboard_key], device=device),
+        }
+    if mode == "gta_drive":
+        camera_value_map = {
+            "a": [0, -cam_value],
+            "d": [0, cam_value],
+            "q": [0, 0],
+        }
+        keyboard_idx = {
+            "w": [1, 0], "s": [0, 1],
+            "q": [0, 0],
+        }
+        mouse_key = None
+        keyboard_key = None
+        for token in tokens:
+            if token in camera_value_map:
+                mouse_key = token
+            if token in keyboard_idx:
+                keyboard_key = token
+        if mouse_key is None:
+            mouse_key = "q"
+        if keyboard_key is None:
+            keyboard_key = "q"
+        return {
+            "mouse": torch.tensor(camera_value_map[mouse_key], device=device),
+            "keyboard": torch.tensor(keyboard_idx[keyboard_key], device=device),
+        }
+    if mode == "templerun":
+        keyboard_idx = {
+            "w": [0, 1, 0, 0, 0, 0, 0], "s": [0, 0, 1, 0, 0, 0, 0],
+            "a": [0, 0, 0, 0, 0, 1, 0], "d": [0, 0, 0, 0, 0, 0, 1],
+            "z": [0, 0, 0, 1, 0, 0, 0], "c": [0, 0, 0, 0, 1, 0, 0],
+            "q": [1, 0, 0, 0, 0, 0, 0],
+        }
+        keyboard_key = None
+        for token in tokens:
+            if token in keyboard_idx:
+                keyboard_key = token
+        if keyboard_key is None:
+            keyboard_key = "q"
+        return {"keyboard": torch.tensor(keyboard_idx[keyboard_key], device=device)}
+    raise ValueError(f"Unsupported mode: {mode}")
+
+def normalize_action(mode, action, device):
+    if action is None:
+        return get_current_action(mode=mode, device=device)
+
+    if isinstance(action, dict):
+        if "keys" in action:
+            tokens = _parse_key_tokens(action["keys"])
+            return _encode_keys_from_tokens(mode, tokens, device)
+
+        keyboard = action.get("keyboard")
+        mouse = action.get("mouse")
+        if torch.is_tensor(keyboard):
+            keyboard_tensor = keyboard.to(device)
+        elif isinstance(keyboard, np.ndarray) or _is_numeric_sequence(keyboard):
+            keyboard_tensor = torch.tensor(keyboard, device=device)
+        else:
+            keyboard_tokens = _parse_key_tokens(keyboard)
+            keyboard_tensor = _encode_keys_from_tokens(mode, keyboard_tokens, device)["keyboard"]
+
+        if mode == "templerun":
+            return {"keyboard": keyboard_tensor}
+
+        if torch.is_tensor(mouse):
+            mouse_tensor = mouse.to(device)
+        elif isinstance(mouse, np.ndarray) or _is_numeric_sequence(mouse):
+            mouse_tensor = torch.tensor(mouse, device=device)
+        else:
+            mouse_tokens = _parse_key_tokens(mouse)
+            mouse_tensor = _encode_keys_from_tokens(mode, mouse_tokens, device)["mouse"]
+
+        return {"keyboard": keyboard_tensor, "mouse": mouse_tensor}
+
+    if isinstance(action, (str, list, tuple)):
+        tokens = _parse_key_tokens(action)
+        return _encode_keys_from_tokens(mode, tokens, device)
+
+    raise ValueError(f"Unsupported action type: {type(action)}")
 
 def cond_current(conditional_dict, current_start_frame, num_frame_per_block, replace=None, mode='universal'):
     
@@ -687,6 +811,183 @@ class CausalInferenceStreamingPipeline(torch.nn.Module):
             return output
         else:
             return video
+
+    def stream_inference(
+        self,
+        noise: torch.Tensor,
+        conditional_dict,
+        initial_latent: Optional[torch.Tensor] = None,
+        return_latents: bool = False,
+        mode: str = 'universal',
+        action_provider=None,
+    ):
+        """
+        Stream inference and yield decoded video blocks (numpy arrays).
+        """
+        assert noise.shape[1] == 16
+        batch_size, num_channels, num_frames, height, width = noise.shape
+
+        assert num_frames % self.num_frame_per_block == 0
+        num_blocks = num_frames // self.num_frame_per_block
+
+        num_input_frames = initial_latent.shape[2] if initial_latent is not None else 0
+        num_output_frames = num_frames + num_input_frames
+
+        output = torch.zeros(
+            [batch_size, num_channels, num_output_frames, height, width],
+            device=noise.device,
+            dtype=noise.dtype
+        )
+        videos = []
+        vae_cache = copy.deepcopy(ZERO_VAE_CACHE)
+        for j in range(len(vae_cache)):
+            vae_cache[j] = None
+
+        self.kv_cache1 = self.kv_cache_keyboard = self.kv_cache_mouse = self.crossattn_cache = None
+        if self.kv_cache1 is None:
+            self._initialize_kv_cache(
+                batch_size=batch_size,
+                dtype=noise.dtype,
+                device=noise.device
+            )
+            self._initialize_kv_cache_mouse_and_keyboard(
+                batch_size=batch_size,
+                dtype=noise.dtype,
+                device=noise.device
+            )
+            self._initialize_crossattn_cache(
+                batch_size=batch_size,
+                dtype=noise.dtype,
+                device=noise.device
+            )
+        else:
+            for block_index in range(self.num_transformer_blocks):
+                self.crossattn_cache[block_index]["is_init"] = False
+            for block_index in range(len(self.kv_cache1)):
+                self.kv_cache1[block_index]["global_end_index"] = torch.tensor(
+                    [0], dtype=torch.long, device=noise.device)
+                self.kv_cache1[block_index]["local_end_index"] = torch.tensor(
+                    [0], dtype=torch.long, device=noise.device)
+                self.kv_cache_mouse[block_index]["global_end_index"] = torch.tensor(
+                    [0], dtype=torch.long, device=noise.device)
+                self.kv_cache_mouse[block_index]["local_end_index"] = torch.tensor(
+                    [0], dtype=torch.long, device=noise.device)
+                self.kv_cache_keyboard[block_index]["global_end_index"] = torch.tensor(
+                    [0], dtype=torch.long, device=noise.device)
+                self.kv_cache_keyboard[block_index]["local_end_index"] = torch.tensor(
+                    [0], dtype=torch.long, device=noise.device)
+
+        current_start_frame = 0
+        if initial_latent is not None:
+            timestep = torch.ones([batch_size, 1], device=noise.device, dtype=torch.int64) * 0
+            assert num_input_frames % self.num_frame_per_block == 0
+            num_input_blocks = num_input_frames // self.num_frame_per_block
+
+            for _ in range(num_input_blocks):
+                current_ref_latents = \
+                    initial_latent[:, :, current_start_frame:current_start_frame + self.num_frame_per_block]
+                output[:, :, current_start_frame:current_start_frame + self.num_frame_per_block] = current_ref_latents
+                self.generator(
+                    noisy_image_or_video=current_ref_latents,
+                    conditional_dict=cond_current(conditional_dict, current_start_frame, self.num_frame_per_block, replace=True),
+                    timestep=timestep * 0,
+                    kv_cache=self.kv_cache1,
+                    kv_cache_mouse=self.kv_cache_mouse,
+                    kv_cache_keyboard=self.kv_cache_keyboard,
+                    crossattn_cache=self.crossattn_cache,
+                    current_start=current_start_frame * self.frame_seq_length,
+                )
+                current_start_frame += self.num_frame_per_block
+
+        all_num_frames = [self.num_frame_per_block] * num_blocks
+
+        for current_num_frames in all_num_frames:
+            noisy_input = noise[
+                :, :, current_start_frame - num_input_frames:current_start_frame + current_num_frames - num_input_frames]
+
+            if action_provider is None:
+                current_actions = get_current_action(mode=mode, device=noise.device)
+            else:
+                action = action_provider(current_start_frame, self.num_frame_per_block, mode)
+                current_actions = normalize_action(mode, action, device=noise.device)
+
+            new_act, conditional_dict = cond_current(
+                conditional_dict,
+                current_start_frame,
+                self.num_frame_per_block,
+                replace=current_actions,
+                mode=mode
+            )
+
+            for index, current_timestep in enumerate(self.denoising_step_list):
+                timestep = torch.ones(
+                    [batch_size, current_num_frames],
+                    device=noise.device,
+                    dtype=torch.int64) * current_timestep
+
+                if index < len(self.denoising_step_list) - 1:
+                    _, denoised_pred = self.generator(
+                        noisy_image_or_video=noisy_input,
+                        conditional_dict=new_act,
+                        timestep=timestep,
+                        kv_cache=self.kv_cache1,
+                        kv_cache_mouse=self.kv_cache_mouse,
+                        kv_cache_keyboard=self.kv_cache_keyboard,
+                        crossattn_cache=self.crossattn_cache,
+                        current_start=current_start_frame * self.frame_seq_length
+                    )
+                    next_timestep = self.denoising_step_list[index + 1]
+                    noisy_input = self.scheduler.add_noise(
+                        rearrange(denoised_pred, 'b c f h w -> (b f) c h w'),
+                        torch.randn_like(rearrange(denoised_pred, 'b c f h w -> (b f) c h w')),
+                        next_timestep * torch.ones(
+                            [batch_size * current_num_frames], device=noise.device, dtype=torch.long)
+                    )
+                    noisy_input = rearrange(noisy_input, '(b f) c h w -> b c f h w', b=denoised_pred.shape[0])
+                else:
+                    _, denoised_pred = self.generator(
+                        noisy_image_or_video=noisy_input,
+                        conditional_dict=new_act,
+                        timestep=timestep,
+                        kv_cache=self.kv_cache1,
+                        kv_cache_mouse=self.kv_cache_mouse,
+                        kv_cache_keyboard=self.kv_cache_keyboard,
+                        crossattn_cache=self.crossattn_cache,
+                        current_start=current_start_frame * self.frame_seq_length
+                    )
+
+            output[:, :, current_start_frame:current_start_frame + current_num_frames] = denoised_pred
+
+            context_timestep = torch.ones_like(timestep) * self.args.context_noise
+            self.generator(
+                noisy_image_or_video=denoised_pred,
+                conditional_dict=new_act,
+                timestep=context_timestep,
+                kv_cache=self.kv_cache1,
+                kv_cache_mouse=self.kv_cache_mouse,
+                kv_cache_keyboard=self.kv_cache_keyboard,
+                crossattn_cache=self.crossattn_cache,
+                current_start=current_start_frame * self.frame_seq_length,
+            )
+
+            denoised_pred = denoised_pred.transpose(1, 2)
+            video, vae_cache = self.vae_decoder(denoised_pred.half(), *vae_cache)
+            videos += [video]
+            video = rearrange(video, "B T C H W -> B T H W C")
+            video = ((video.float() + 1) * 127.5).clip(0, 255).cpu().numpy().astype(np.uint8)[0]
+            video = np.ascontiguousarray(video)
+            yield video
+
+            current_start_frame += current_num_frames
+
+        videos_tensor = torch.cat(videos, dim=1)
+        videos = rearrange(videos_tensor, "B T C H W -> B T H W C")
+        videos = ((videos.float() + 1) * 127.5).clip(0, 255).cpu().numpy().astype(np.uint8)[0]
+        video = np.ascontiguousarray(videos)
+
+        if return_latents:
+            return output
+        return video
 
     def _initialize_kv_cache(self, batch_size, dtype, device):
         """
