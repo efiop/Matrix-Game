@@ -38,8 +38,14 @@ class WanxVAEWrapper(VAEWrapper):
         
         return self
 
-def get_wanx_vae_wrapper(model_path, weight_dtype):
-    vae = WanVAE(pretrained_path = os.path.join(model_path, "Wan2.1_VAE.pth")).to(weight_dtype)
+def get_wanx_vae_wrapper(model_path, weight_dtype, vae_state_dict=None):
+    vae = WanVAE(pretrained_path=None).to(weight_dtype)
+    if vae_state_dict is None:
+        vae_state_dict = torch.load(
+            os.path.join(model_path, "Wan2.1_VAE.pth"),
+            map_location="cpu",
+        )
+    vae.model.load_state_dict(vae_state_dict, assign=True)
     clip = CLIPModel(checkpoint_path = os.path.join(model_path, "models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth"),
     tokenizer_path = os.path.join(model_path, 'xlm-roberta-large'))
     return WanxVAEWrapper(vae, clip)

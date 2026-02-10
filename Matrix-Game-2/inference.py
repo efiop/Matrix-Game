@@ -71,7 +71,11 @@ class InteractiveGameInference:
         self.pipeline = pipeline.to(device=self.device, dtype=self.weight_dtype)
         self.pipeline.vae_decoder.to(torch.float16)
 
-        vae = get_wanx_vae_wrapper(self.args.pretrained_model_path, torch.float16)
+        vae = get_wanx_vae_wrapper(
+            self.args.pretrained_model_path,
+            torch.float16,
+            vae_state_dict=vae_state_dict,
+        )
         vae.requires_grad_(False)
         vae.eval()
         self.vae = vae.to(self.device, self.weight_dtype)
