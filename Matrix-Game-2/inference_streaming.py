@@ -26,6 +26,7 @@ def parse_args():
                         help="Max number of output latent frames")
     parser.add_argument("--seed", type=int, default=0, help="Random seed")
     parser.add_argument("--pretrained_model_path", type=str, default="Matrix-Game-2.0", help="Path to the VAE model folder")
+    parser.add_argument("--compile_vae", action="store_true", help="Compile VAE decoder for higher steady-state throughput (slower startup)")
     args = parser.parse_args()
     return args
 
@@ -61,7 +62,8 @@ class InteractiveGameInference:
         current_vae_decoder.to(self.device, torch.float16)
         current_vae_decoder.requires_grad_(False)
         current_vae_decoder.eval()
-        current_vae_decoder.compile(mode="max-autotune-no-cudagraphs")
+        if self.args.compile_vae:
+            current_vae_decoder.compile(mode="max-autotune-no-cudagraphs")
         pipeline = CausalInferenceStreamingPipeline(self.config, generator=generator, vae_decoder=current_vae_decoder)
         if self.args.checkpoint_path:
             print("Loading Pretrained Model...")
