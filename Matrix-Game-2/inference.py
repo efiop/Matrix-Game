@@ -77,6 +77,7 @@ class InteractiveGameInference:
             self.args.pretrained_model_path,
             torch.float16,
             vae_state_dict=vae_state_dict,
+            load_clip_tokenizer=False,
         )
         vae.requires_grad_(False)
         vae.eval()

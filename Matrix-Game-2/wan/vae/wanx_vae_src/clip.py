@@ -506,7 +506,7 @@ def clip_xlm_roberta_vit_h_14(
 
 class CLIPModel(ModelMixin):
 
-    def __init__(self, checkpoint_path, tokenizer_path):
+    def __init__(self, checkpoint_path, tokenizer_path, load_tokenizer=True):
         super().__init__()
         self.checkpoint_path = checkpoint_path
         self.tokenizer_path = tokenizer_path
@@ -522,11 +522,13 @@ class CLIPModel(ModelMixin):
         self.model.load_state_dict(
             torch.load(checkpoint_path, map_location='cpu'))
 
-        # init tokenizer
-        self.tokenizer = HuggingfaceTokenizer(
-            name=tokenizer_path,
-            seq_len=self.model.max_text_len - 2,
-            clean='whitespace')
+        # Tokenizer is optional for image-only encode_video usage.
+        self.tokenizer = None
+        if load_tokenizer:
+            self.tokenizer = HuggingfaceTokenizer(
+                name=tokenizer_path,
+                seq_len=self.model.max_text_len - 2,
+                clean='whitespace')
     def encode_video(self, video):
         # preprocess
         b, c, t, h, w = video.shape
