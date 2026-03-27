@@ -16,7 +16,7 @@
 This repository provides the official implementations of Matrix-Game-1.0, Matrix-Game-2.0 and Matrix-Game-3.0
 
 <div align="center">
-  <img src="Matrix-Game-3/assets/matrix-game3.mp4" />
+  <video src="Matrix-Game-3/assets/matrix-game3.mp4" controls muted playsinline loop width="100%" style="max-width: 960px;"></video>
 </div>
 
 **Related Project**:  If you want to create explorable large-scale 3D scene which can be seamlessly integrated into games or VR applications, please visit [Matrix-3D](https://github.com/SkyworkAI/Matrix-3D) for details.
